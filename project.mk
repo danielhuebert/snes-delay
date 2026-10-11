@@ -1,2 +1,2 @@
-PROJECT = snes-delay
-UCXXSRC = snes-delay.cpp
+PROJECT = spc-echo
+UCXXSRC = spc-echo.cpp
