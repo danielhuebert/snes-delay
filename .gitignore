@@ -1,2 +1,3 @@
 build/
 *.mnlgxdunit
+.DS_Store
