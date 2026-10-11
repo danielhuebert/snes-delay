@@ -79,9 +79,17 @@ void OSC_PARAM(uint16_t index, uint16_t value);
   Stereo interleaved. 6 KB SRAM für Code, 128 KB SDRAM für Puffer.
 - delfx/revfx (`userdelfx.h` / `userrevfx.h`): `DELFX_PROCESS(float *xn, uint32_t frames)` bzw. `REVFX_PROCESS`, in place, Stereo interleaved.
   12 KB SRAM für Code, ca. 2,4 MB SDRAM.
+- Stereo-Interleaving in `xn`: L0, R0, L1, R1, … → `x += 2` pro Frame.
 - Große Puffer immer ins SDRAM legen: `static float s_buf[N] __sdram;`
+- Kleine Zustandsarrays (FIR-History, Interpolationszustand) im SRAM lassen (kein `__sdram`).
 - Parameter: `*_PARAM(uint8_t index, int32_t value)`, Wert ist q31 → `q31_to_f32(value)` ergibt 0..1.
+- delfx-Parameterindizes: `k_user_delfx_param_time` (0), `k_user_delfx_param_depth` (1),
+  `k_user_delfx_param_shift_depth` (2).
+- revfx-Parameterindizes: analog mit `k_user_revfx_param_*`.
 - Weitere Hooks: `*_INIT`, `*_SUSPEND`, `*_RESUME`.
+- `*_RESUME`: per-Sample-Zustandsspeicher (z. B. FIR-History, Ringpuffer-Index) leeren,
+  sonst Knackser beim Wiedereinschalten des Effekts.
+- `float * __restrict` für den `xn`-Pointer im Process-Hook empfehlenswert (kein Aliasing).
 
 ## DSP-Regeln für den Cortex-M4 (Echtzeit)
 
@@ -144,6 +152,27 @@ Erster funktionierender Oszillator des Nutzers (auf dem minilogue xd getestet):
   const float sig       = smooth + shape * (quantized - smooth);
   ```
   Verbesserungsidee: `roundf` in der Schleife durch `si_roundf` ersetzen und `1.f / step` vorab berechnen.
+
+## Referenzprojekt: snes-delay
+
+Erster funktionierender Delay-Effekt des Nutzers (auf dem minilogue xd zu testen):
+- Datei `snes-delay.mnlgxdunit`, Anzeigename „spc dly", Typ `delfx`.
+- Nachbau des SNES SPC700 S-DSP Echo-Hardwareblocks.
+- TIME: Delay-Länge 16ms…480ms (wie EDL × 16ms auf dem SNES).
+- DEPTH: Wet/Dry-Mix (wie EVOL).
+- SHIFT+DEPTH: Echo-Feedback / Reverb-Abkling (wie EFB). Stabil bei 0..1 wegen FIR-Gain < 1.
+- FIR-Filter: 8-Tap, fest verdrahtet mit EarthBound/Doom-Koeffizienten
+  `FA 0A 1A 13 13 1A 0A FA` (signed, /128) → leichter Tiefpass-Charakter, Summen-Gain ≈ 0,77.
+- Ringpuffer L+R je 23040 Floats im SDRAM (~180 KB gesamt), FIR-History (8 × 2 Floats) im SRAM.
+- Kern pro Frame:
+  ```cpp
+  const float rd = s_buf[s_pos];          // ältestes Sample lesen
+  fir_push(s_fir, rd);                    // History verschieben
+  const float filt = fir_apply(s_fir);   // 8-Tap-FIR
+  s_buf[s_pos] = clip1m1f(in + fb*filt); // Feedback zurückschreiben
+  if (++s_pos >= delay) s_pos = 0;
+  x[0] = clip1m1f(in + depth * filt);    // Ausgang
+  ```
 
 ## SDK v2 (andere Geräte, nur zur Orientierung)
 
